@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BRVM MCP</title>
+<meta name="description" content="Serveur MCP pour la BRVM : un assistant IA interroge cours, indices, dividendes, fondamentaux et risque des actions cotées. Essayez-le dans la page avec votre clé API.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="barre-haut">
+  <div class="conteneur">
+    <a class="marque" href="#"><span class="logo">B</span><span>brvm<b>-mcp</b></span></a>
+    <nav>
+      <a href="#marche">Marché</a>
+      <a href="#essayer">Essayer</a>
+      <a href="#outils">Outils</a>
+      <a href="#installer">Installer</a>
+      <a class="gh" href="https://github.com/DylaneTrader/brvm-mcp">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="conteneur hero-grille">
+    <div>
+      <p class="surtitre">Serveur Model Context Protocol · BRVM · UEMOA</p>
+      <h1>Le marché de la BRVM, branché sur votre assistant IA.</h1>
+      <p class="chapo">brvm-mcp donne à Claude, ChatGPT, Cursor ou tout client MCP douze outils pour interroger les cours, indices, dividendes et fondamentaux des actions cotées à la Bourse Régionale des Valeurs Mobilières, et calculer leur performance et leur risque selon les règles du marché régional. L'assistant répond avec les données de la séance, pas de mémoire.</p>
+      <div class="actions">
+        <a class="bouton plein" href="#essayer">Essayer dans la page</a>
+        <a class="bouton" href="#installer">Installer le serveur</a>
+      </div>
+      <ul class="chiffres">
+        <li><b>12</b><span>outils</span></li>
+        <li><b>{{NB_SOCIETES}}</b><span>sociétés cotées</span></li>
+        <li><b>{{DATE}}</b><span>dernière séance ({{STATUT}})</span></li>
+      </ul>
+    </div>
+    <div class="fenetre" aria-hidden="true">
+      <div class="fenetre-titre"><i></i><i></i><i></i><span>Claude + brvm-mcp</span></div>
+      <div class="fenetre-corps">
+        <p class="demo-q">Compare Sonatel et Orange CI sur un an.</p>
+        <p class="demo-outil"><span class="rond"></span><code>comparer(tickers=["SNTS.sn", "ORAC.ci"], debut="…")</code></p>
+        <p class="demo-outil"><span class="rond"></span><code>derniere_seance()</code></p>
+        <p class="demo-r">Voici, pour les deux titres et jusqu'au {{DATE}}, le rendement, la volatilité annualisée, la perte maximale et le bêta face au BRVM Composite, calculés entre séances d'échange. Je signale aussi les séances à la limite de ±7,5 %, qui rendent la VaR historique moins fiable.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<main>
+<section id="marche" class="bloc">
+  <div class="conteneur">
+    <div class="titre-bloc">
+      <div>
+        <p class="surtitre">La séance vue par les outils du serveur</p>
+        <h2>Séance du {{DATE}}</h2>
+      </div>
+      <span class="statut s-{{STATUT}}">Séance {{STATUT}}</span>
+    </div>
+    <div class="grille-3">{{CARTES_INDICES}}</div>
+
+    <div class="grille-2-1">
+      <article class="carte">
+        <header class="carte-tete"><h3>BRVM Composite sur un an</h3><code class="appel">indice(code="BRVMC")</code></header>
+        {{RESUME}}
+        {{COURBE}}
+      </article>
+      <article class="carte">
+        <header class="carte-tete"><h3>Palmarès des 20 séances</h3><code class="appel">palmares(seances=20)</code></header>
+        <p class="note">Du {{PAL_DU}} au {{PAL_AU}}, variation du cours de clôture.</p>
+        {{PALMARES}}
+      </article>
+    </div>
+
+    <article class="carte">
+      <header class="carte-tete"><h3>Les plus grandes capitalisations sur un an</h3><code class="appel">comparer({{APPEL_COMPARER}})</code></header>
+      <div class="defile"><table class="tableau">
+        <thead><tr><th>Société</th><th>Rendement</th><th>Volatilité</th><th>Sharpe</th><th>VaR 95 % 1 j</th><th>Perte max.</th><th>Bêta</th><th>Échanges</th></tr></thead>
+        <tbody>{{COMPARER}}</tbody>
+      </table></div>
+      <p class="note">Rendement hors dividendes, volatilité annualisée sur 252 séances, VaR historique sur un jour, bêta face au BRVM Composite sur les dates communes d'échange, part des séances où le titre a échangé. <a href="seance.json">Réponses brutes en JSON</a>.</p>
+    </article>
+  </div>
+</section>
+
+<section id="essayer" class="bloc bloc-sombre">
+  <div class="conteneur">
+    <div class="titre-bloc">
+      <div>
+        <p class="surtitre">Démonstration en direct</p>
+        <h2>Posez vos questions à Claude, avec les outils du serveur</h2>
+      </div>
+    </div>
+    <div class="chat-grille">
+      <aside class="reglages">
+        <label for="cle">Votre clé API Anthropic</label>
+        <div class="cle-ligne">
+          <input id="cle" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+          <button id="voir-cle" type="button" title="Afficher ou masquer">👁</button>
+        </div>
+        <label class="case"><input id="memoriser" type="checkbox"> Garder la clé pour cet onglet</label>
+        <button id="oublier" type="button" class="lien">Effacer la clé</button>
+        <p class="note">La clé reste dans votre navigateur et n'est envoyée qu'à <code>api.anthropic.com</code>. Les appels sont facturés sur votre compte Anthropic. Pas de clé ? <a href="https://console.anthropic.com/settings/keys">Console Anthropic</a>.</p>
+
+        <label for="modele">Modèle</label>
+        <select id="modele">
+          <option value="claude-opus-5-5">Claude Opus 5.5</option>
+          <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+          <option value="claude-haiku-5-5">Claude Haiku 5.5 (rapide)</option>
+        </select>
+
+        <div id="etat-moteur" class="etat" data-etat="attente"><i></i><span>Serveur en attente</span></div>
+        <p class="note">Les outils ne passent par aucun serveur : le code Python de brvm-mcp tourne dans votre navigateur (Pyodide) et lit les données publiques de brvm-py. Premier chargement : une vingtaine de secondes.</p>
+      </aside>
+
+      <div class="chat">
+        <div class="chat-tete">
+          <span>Conversation</span>
+          <button id="effacer" type="button" class="lien">Nouvelle conversation</button>
+        </div>
+        <div id="fil" class="fil" aria-live="polite">
+          <div id="accueil" class="accueil">
+            <p>Choisissez une question ou écrivez la vôtre. Chaque appel d'outil s'affiche, avec sa réponse brute.</p>
+            <div class="puces">{{PUCES}}</div>
+          </div>
+        </div>
+        <template id="modele-accueil">
+          <div id="accueil" class="accueil">
+            <p>Choisissez une question ou écrivez la vôtre. Chaque appel d'outil s'affiche, avec sa réponse brute.</p>
+            <div class="puces">{{PUCES}}</div>
+          </div>
+        </template>
+        <div class="saisie">
+          <textarea id="question" rows="1" placeholder="Ex. : quel est le rendement de Sonatel depuis janvier ?"></textarea>
+          <button id="envoyer" type="button" class="bouton plein">Envoyer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="outils" class="bloc">
+  <div class="conteneur">
+    <div class="titre-bloc"><div><p class="surtitre">Ce que l'assistant peut faire</p><h2>Les douze outils</h2></div></div>
+    <div class="grille-outils">{{OUTILS}}</div>
+  </div>
+</section>
+
+<section id="installer" class="bloc bloc-doux">
+  <div class="conteneur grille-1-1">
+    <div>
+      <p class="surtitre">Installation</p>
+      <h2>Une ligne dans votre client MCP</h2>
+      <p>Le serveur tourne sur votre poste et télécharge les données publiques de brvm-py, mises à jour chaque jour de séance. Il suffit d'<a href="https://docs.astral.sh/uv/">uv</a>.</p>
+      <div class="onglets" role="tablist">{{ONGLETS}}</div>
+      {{PANNEAUX}}
+    </div>
+    <div>
+      <p class="surtitre">Les règles de la BRVM prises en compte</p>
+      <ul class="regles">
+        <li><b>Jours sans échange.</b> Un titre qui n'échange pas n'a pas de ligne ce jour-là : les rendements se calculent entre séances d'échange, jamais avec un rendement nul inventé.</li>
+        <li><b>Limite de ±7,5 %.</b> Les séances à la limite sont signalées, car elles rendent la VaR historique trompeuse.</li>
+        <li><b>Dates communes.</b> Bêta et corrélations sur les dates où les deux séries échangent, 31 observations au minimum.</li>
+        <li><b>Données propres.</b> Cours ajustés des divisions du nominal, dividendes nets d'IRVM contrôlés.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="pied">
+  <div class="conteneur">
+    <p><b>brvm-mcp</b> · Dylane NDOUDY-BAMOUENIZO, analyste quantitatif · <a href="https://github.com/DylaneTrader/brvm-mcp">code</a> · <a href="https://github.com/DylaneTrader/brvm-py">données (brvm-py)</a></p>
+    <p>Données de marché issues de sources publiques (brvm.org, Sikafinance), fournies sans garantie. Mesures historiques : ce n'est pas un conseil en investissement.</p>
+  </div>
+</footer>
+
+<script type="application/json" id="config-chat">{{CONFIG}}</script>
+<script type="module" src="chat.js"></script>
+<script>
+document.querySelectorAll(".onglets button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".onglets button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll("[data-panneau]").forEach((p) => p.hidden = p.dataset.panneau !== b.dataset.onglet);
+}));
+document.querySelectorAll(".copier").forEach((b) => b.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = "Copié"; }
+  catch (_) { b.textContent = "Sélectionnez le texte"; }
+  setTimeout(() => (b.textContent = "Copier"), 1600);
+}));
+</script>
+</body>
+</html>

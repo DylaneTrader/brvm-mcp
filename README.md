@@ -4,7 +4,7 @@ Serveur [MCP](https://modelcontextprotocol.io) pour la **Bourse Régionale des V
 
 Les données viennent de [brvm-py](https://github.com/DylaneTrader/brvm-py) : cours ajustés des divisions du nominal, dividendes contrôlés, mis à jour chaque jour de séance.
 
-Page de présentation, mise à jour chaque séance : **https://dylanetrader.github.io/brvm-mcp/** (la séance du jour vue par les outils du serveur, générée par `page/publier.py`).
+Page de présentation, mise à jour chaque séance : **https://dylanetrader.github.io/brvm-mcp/** (la séance du jour vue par les outils du serveur, générée par `page/publier.py`). On peut y essayer le serveur sans rien installer : le visiteur saisit sa propre clé API Anthropic, Claude appelle les outils, et ces outils tournent dans son navigateur (le code Python du serveur chargé par Pyodide). La clé n'est envoyée qu'à `api.anthropic.com`.
 
 ## Ce qu'on peut demander
 
