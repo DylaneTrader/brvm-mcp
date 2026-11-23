@@ -1,0 +1,46 @@
+name: Page publique
+
+# Recalcule la page de présentation (séance du jour vue par les outils du serveur) et la publie sur
+# GitHub Pages : https://dylanetrader.github.io/brvm-mcp/
+# Prérequis, une seule fois : Settings > Pages > Source : « GitHub Actions ».
+
+on:
+  schedule:
+    - cron: "57 19 * * 1-5"     # après la mise à jour des données de brvm-py
+  push:
+    branches: [main]
+    paths: ["page/**", "src/**", ".github/workflows/page.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  construire:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - run: python page/publier.py --sortie site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deployer:
+    needs: construire
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - id: deploiement
+        uses: actions/deploy-pages@v4
