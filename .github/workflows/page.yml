@@ -29,7 +29,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: pip install .
+      # Chat de la page : roues Python chargées par Pyodide dans le navigateur du visiteur…
+      - run: pip wheel --no-deps -w site/paquets . "brvm-py @ git+https://github.com/DylaneTrader/brvm-py"
+      # … et SDK TypeScript d'Anthropic mis en un seul module (versions figées).
+      - name: SDK Anthropic pour le navigateur
+        run: |
+          mkdir -p /tmp/sdk site/vendor
+          cd /tmp/sdk
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund @anthropic-ai/sdk@1.7.0 esbuild@0.28.2
+          echo 'export { default } from "@anthropic-ai/sdk"; export * from "@anthropic-ai/sdk";' > entree.mjs
+          npx esbuild entree.mjs --bundle --format=esm --platform=browser --minify --outfile="$GITHUB_WORKSPACE/site/vendor/anthropic.mjs"
       - run: python page/publier.py --sortie site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

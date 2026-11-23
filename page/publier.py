@@ -3,6 +3,13 @@
 Chaque bloc de la page est la réponse d'un outil MCP du serveur, appelé comme le ferait un assistant IA
 (`derniere_seance`, `indice`, `palmares`, `comparer`). Les réponses brutes sont publiées à côté, en JSON.
 
+La page contient aussi un chat : le visiteur saisit sa propre clé API Anthropic, Claude appelle les outils, et
+ces outils tournent dans son navigateur (le vrai code Python du serveur, chargé par Pyodide dans
+`statique/moteur.js`). Le site attend donc, dans le dossier de sortie :
+
+- `paquets/*.whl` : les roues de brvm-py et de brvm-mcp (`pip wheel --no-deps`) ;
+- `vendor/anthropic.mjs` : le SDK TypeScript d'Anthropic mis en un seul module (esbuild).
+
     python page/publier.py --sortie site
 
 Le workflow `.github/workflows/page.yml` le relance chaque jour de séance et publie le site sur GitHub Pages.
@@ -10,8 +17,10 @@ Le workflow `.github/workflows/page.yml` le relance chaque jour de séance et pu
 from __future__ import annotations
 
 import argparse
+import asyncio
 import html
 import json
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -41,14 +50,6 @@ INSTALL = {
         indent=2),
     "Ligne de commande (uv)": "uvx --from git+https://github.com/DylaneTrader/brvm-mcp brvm-mcp",
 }
-QUESTIONS = [
-    "Compare Sonatel, Orange CI et Société Générale CI depuis janvier 2025 : rendement, volatilité, "
-    "perte maximale et bêta face au BRVM Composite.",
-    "Quelles banques sont cotées au Sénégal, et quel est leur PER au dernier cours ?",
-    "Quelles actions ont le plus baissé sur les 20 dernières séances ?",
-]
-
-
 def _fr(x, d=2, signe=False) -> str:
     if x is None or (isinstance(x, float) and pd.isna(x)):
         return "n.d."
@@ -58,11 +59,6 @@ def _fr(x, d=2, signe=False) -> str:
 
 def _classe(x) -> str:
     return "" if x is None or pd.isna(x) else ("hausse" if x > 0 else "baisse" if x < 0 else "")
-
-
-def _appel(nom: str, **kw) -> str:
-    args = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kw.items())
-    return f'<p class="appel">Outil appelé : <code>{nom}({html.escape(args)})</code></p>'
 
 
 def collecter() -> dict:
@@ -91,38 +87,96 @@ def collecter() -> dict:
     }
 
 
-def _svg_indice(s: pd.Series) -> str:
+ICI = Path(__file__).resolve().parent
+FAMILLES = {
+    "derniere_seance": "Marché", "liste_indices": "Marché", "indice": "Marché", "palmares": "Marché",
+    "rechercher_societe": "Sociétés", "fiche_societe": "Sociétés", "fondamentaux": "Sociétés",
+    "dividendes": "Sociétés", "cours": "Cours",
+    "performance_risque": "Risque", "comparer": "Risque", "correlations": "Risque",
+}
+QUESTIONS_CHAT = [
+    "Quelle est la dernière séance disponible, et comment a fini le BRVM Composite ?",
+    "Quelles actions ont le plus monté et le plus baissé sur les 20 dernières séances ?",
+    "Compare Sonatel, Orange CI et SGB CI sur un an : rendement, volatilité, perte maximale et bêta.",
+    "Quelles banques sont cotées au Sénégal, et quel est leur PER au dernier cours ?",
+]
+
+
+def _x(s: str) -> str:
+    return html.escape(str(s), quote=True)
+
+
+def _echelle(vals: list[float], marge: float = 0.06) -> tuple[float, float]:
+    lo, hi = min(vals), max(vals)
+    pad = (hi - lo) * marge or 1.0
+    return lo - pad, hi + pad
+
+
+def _svg_courbe(s: pd.Series, ident: str) -> str:
+    """Grand graphique en aire : valeur de l'indice sur un an, axes en français."""
     s = s.dropna()
-    L, H, g, d, h, b = 760, 220, 46, 12, 12, 26
+    L, H, g, d, h, b = 900, 470, 58, 14, 22, 30
     w, hh = L - g - d, H - h - b
-    lo, hi = float(s.min()), float(s.max())
-    pad = (hi - lo) * 0.06 or 1
-    lo, hi = lo - pad, hi + pad
+    lo, hi = _echelle([float(v) for v in s])
     x = lambda i: g + w * i / max(len(s) - 1, 1)  # noqa: E731
     y = lambda v: h + hh * (1 - (v - lo) / (hi - lo))  # noqa: E731
-    p = [f'<svg viewBox="0 0 {L} {H}" role="img" aria-label="BRVM Composite sur un an">']
+    p = [f'<svg viewBox="0 0 {L} {H}" class="courbe" role="img" aria-label="Évolution sur un an">',
+         f'<defs><linearGradient id="{ident}" x1="0" x2="0" y1="0" y2="1">'
+         '<stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/>'
+         '<stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>']
     for k in range(5):
-        v = lo + (hi - lo) * k / 4
-        p.append(f'<line x1="{g}" x2="{L - d}" y1="{y(v):.1f}" y2="{y(v):.1f}" class="grille"/>')
-        p.append(f'<text x="{g - 6}" y="{y(v) + 4:.1f}" text-anchor="end" class="ax">{_fr(v, 0)}</text>')
-    pts = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(s))
-    p.append(f'<polyline points="{pts}" fill="none" stroke="#1f4e79" stroke-width="1.8"/>')
+        v = lo + (hi - lo) * (k + .5) / 5
+        p.append(f'<line x1="{g}" x2="{L - d}" y1="{y(v):.1f}" y2="{y(v):.1f}" class="grille"/>'
+                 f'<text x="{g - 8}" y="{y(v) + 4:.1f}" text-anchor="end" class="ax">{_fr(v, 0)}</text>')
+    pts = [f"{x(i):.1f},{y(float(v)):.1f}" for i, v in enumerate(s)]
+    p.append(f'<polygon points="{g:.1f},{h + hh} {" ".join(pts)} {x(len(s) - 1):.1f},{h + hh}" fill="url(#{ident})"/>')
+    p.append(f'<polyline points="{" ".join(pts)}" fill="none" stroke="var(--accent)" stroke-width="2.2" '
+             'stroke-linejoin="round"/>')
+    i_max = int(s.values.argmax())
+    p.append(f'<circle cx="{x(len(s) - 1):.1f}" cy="{y(float(s.iloc[-1])):.1f}" r="4.5" fill="var(--accent)"/>')
+    p.append(f'<text x="{x(i_max):.1f}" y="{y(float(s.iloc[i_max])) - 9:.1f}" text-anchor="middle" class="ax fort">'
+             f'plus haut {_fr(float(s.iloc[i_max]), 2)}</text>')
     mois = s.index.to_period("M")
+    noms_mois = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
     for i in range(1, len(s)):
-        if mois[i] != mois[i - 1] and mois[i].month in (1, 4, 7, 10):
+        if mois[i] != mois[i - 1] and mois[i].month % 2 == 1:
             p.append(f'<text x="{x(i):.1f}" y="{H - 8}" text-anchor="middle" class="ax">'
-                     f'{s.index[i]:%m/%Y}</text>')
+                     f'{noms_mois[mois[i].month - 1]} {str(mois[i].year)[2:]}</text>')
     p.append("</svg>")
     return "".join(p)
 
 
-def page(c: dict) -> str:
-    seance = c["derniere_seance"]
-    fin = pd.Timestamp(seance["derniere_seance"])
-    statut = "close" if seance.get("derniere_seance_close") else "provisoire"
-    noms = c["noms"]
+def _svg_tendance(s: pd.Series) -> str:
+    """Petite courbe d'une carte d'indice (trois derniers mois)."""
+    s = s.dropna().tail(63)
+    L, H = 220, 56
+    lo, hi = _echelle([float(v) for v in s], .1)
+    pts = " ".join(f"{L * i / max(len(s) - 1, 1):.1f},{H * (1 - (float(v) - lo) / (hi - lo)):.1f}"
+                   for i, v in enumerate(s))
+    sens = "hausse" if s.iloc[-1] >= s.iloc[0] else "baisse"
+    return (f'<svg viewBox="0 0 {L} {H}" class="tendance {sens}" preserveAspectRatio="none" aria-hidden="true">'
+            f'<polyline points="{pts}" fill="none" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>')
 
-    lignes_ix = ""
+
+def _resume(s: pd.Series) -> str:
+    """Chiffres clés de l'indice sur la fenêtre du graphique."""
+    s = s.dropna()
+    hi, lo, der = float(s.max()), float(s.min()), float(s.iloc[-1])
+    r = s.pct_change().dropna()
+    vol = float(r.std() * (252 ** .5) * 100)
+    cases = [("Sur la période", _var((der / float(s.iloc[0]) - 1) * 100, 1)),
+             ("Plus haut", f"{_fr(hi)}<small> le {s.idxmax():%d/%m}</small>"),
+             ("Écart au plus haut", _var((der / hi - 1) * 100, 1)),
+             ("Volatilité annualisée", f"{_fr(vol, 1)} %")]
+    return '<dl class="resume">' + "".join(f"<div><dt>{a}</dt><dd>{b}</dd></div>" for a, b in cases) + "</dl>"
+
+
+def _var(x, d=2) -> str:
+    return f'<span class="{_classe(x)}">{_fr(x, d, True)} %</span>'
+
+
+def _cartes_indices(c: dict) -> str:
+    out = []
     for code, nom in INDICES:
         df = c["indices"][code]
         cl = df["cloture"]
@@ -130,97 +184,108 @@ def page(c: dict) -> str:
         avant = cl[cl.index < pd.Timestamp(c["debut_an"])]
         van = (cl.iloc[-1] / avant.iloc[-1] - 1) * 100 if len(avant) else None
         v1 = df["variation_pct"].iloc[-1]
-        lignes_ix += (f"<tr><td>{nom}</td><td>{_fr(cl.iloc[-1])}</td>"
-                      + "".join(f'<td class="{_classe(v)}">{_fr(v, 2, True)} %</td>' for v in (v1, v20, van))
-                      + "</tr>")
+        out.append(f"""<article class="carte indice">
+<header><span class="etiquette">{code}</span><h3>{_x(nom)}</h3></header>
+<p class="valeur">{_fr(cl.iloc[-1])}</p>
+<p class="jour">{_var(v1)} <small>sur la séance</small></p>
+{_svg_tendance(cl)}
+<dl><div><dt>20 séances</dt><dd>{_var(v20)}</dd></div><div><dt>Depuis le 1<sup>er</sup> janvier</dt><dd>{_var(van)}</dd></div></dl>
+</article>""")
+    return "".join(out)
 
-    def lignes_pal(d):
-        return "".join(f'<tr><td>{html.escape(str(noms.get(t, t)))}</td><td>{t.split(".")[0]}</td>'
-                       f'<td class="{_classe(v)}">{_fr(v, 2, True)} %</td></tr>' for t, v in d.items())
 
-    pal = c["palmares"]
-    lignes_cmp = "".join(
-        f'<tr><td>{html.escape(str(noms.get(m["ticker"], m["ticker"])))}</td>'
-        f'<td class="{_classe(m["rendement_total_pct"])}">{_fr(m["rendement_total_pct"], 1, True)} %</td>'
+def _palmares(c: dict) -> str:
+    pal, noms = c["palmares"], c["noms"]
+    tout = list(pal["hausses_pct"].values()) + list(pal["baisses_pct"].values())
+    m = max((abs(v) for v in tout if v is not None), default=1) or 1
+
+    def liste(d: dict) -> str:
+        return "".join(
+            f'<li><span class="nom">{_x(noms.get(t, t))}<small>{t.split(".")[0]}</small></span>'
+            f'<span class="barre {_classe(v)}"><i style="width:{abs(v) / m * 100:.0f}%"></i></span>{_var(v, 1)}</li>'
+            for t, v in d.items())
+    return (f'<h4>Plus fortes hausses</h4><ol class="palmares">{liste(pal["hausses_pct"])}</ol>'
+            f'<h4>Plus fortes baisses</h4><ol class="palmares">{liste(pal["baisses_pct"])}</ol>')
+
+
+def _comparer(c: dict) -> str:
+    noms = c["noms"]
+    return "".join(
+        f'<tr><th scope="row">{_x(noms.get(m["ticker"], m["ticker"]))}<small>{m["ticker"].split(".")[0]}</small></th>'
+        f'<td>{_var(m["rendement_total_pct"], 1)}</td>'
         f'<td>{_fr(m["volatilite_annualisee_pct"], 1)} %</td><td>{_fr(m["sharpe"])}</td>'
-        f'<td>{_fr(m["var_95_1j_pct"])} %</td><td>{_fr(m["perte_max_pct"], 1)} %</td>'
+        f'<td>{_fr(m["var_95_1j_pct"])} %</td><td class="baisse">{_fr(m["perte_max_pct"], 1)} %</td>'
         f'<td>{_fr(m["beta"])}</td><td>{_fr(m["part_seances_echangees_pct"], 0)} %</td></tr>'
         for m in c["comparer"])
-    outils = "".join(f"<tr><td><code>{n}</code></td><td>{html.escape(r)}</td></tr>" for n, r in OUTILS)
-    install = "".join(f"<h3>{html.escape(k)}</h3><pre><code>{html.escape(v)}</code></pre>" for k, v in INSTALL.items())
-    questions = "".join(f"<blockquote>« {html.escape(q)} »</blockquote>" for q in QUESTIONS)
 
-    return f"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BRVM MCP</title>
-<meta name="description" content="Serveur MCP pour la BRVM : un assistant IA interroge cours, indices, dividendes, fondamentaux et risque des actions cotées.">
-<style>
-:root{{--fond:#fff;--texte:#1d1d1f;--doux:#5f6368;--trait:#e3e3e3;--code:#f4f5f7;--hausse:#1f6f3a;--baisse:#a32020}}
-@media (prefers-color-scheme:dark){{:root{{--fond:#121417;--texte:#e8e8e8;--doux:#a0a4aa;--trait:#2c3036;--code:#1c2026;--hausse:#5fbf7a;--baisse:#ef7d7d}}}}
-body{{margin:0;background:var(--fond);color:var(--texte);font-family:"Times New Roman",Times,serif;line-height:1.5}}
-main{{max-width:860px;margin:0 auto;padding:24px 16px 48px}}
-h1{{font-size:1.9rem;margin:0 0 4px}} h2{{margin-top:36px}} h3{{font-size:1.05rem;margin:18px 0 6px}}
-.sous{{color:var(--doux);margin:0 0 20px;font-size:1.1rem}}
-.bandeau{{border-left:4px solid #1f4e79;padding:8px 12px;background:var(--code);margin:16px 0}}
-table{{border-collapse:collapse;width:100%;margin:8px 0 6px;font-size:.97rem}}
-.defile{{overflow-x:auto}}
-td,th{{border-bottom:1px solid var(--trait);padding:5px 8px;text-align:left;white-space:nowrap}}
-td:not(:first-child),th:not(:first-child){{text-align:right}}
-.outils td{{white-space:normal}} .outils td:last-child{{text-align:left}}
-.hausse{{color:var(--hausse)}} .baisse{{color:var(--baisse)}}
-.deux{{display:grid;grid-template-columns:1fr 1fr;gap:20px}} @media (max-width:640px){{.deux{{grid-template-columns:1fr}}}}
-code{{font-family:Consolas,"DejaVu Sans Mono",monospace;font-size:.86em;background:var(--code);padding:1px 4px;border-radius:3px}}
-pre{{background:var(--code);padding:10px 12px;border-radius:4px;overflow-x:auto}} pre code{{padding:0;background:none}}
-.appel{{color:var(--doux);font-size:.9rem;margin:2px 0 0}}
-blockquote{{margin:8px 0;padding:6px 12px;border-left:3px solid var(--trait);font-style:italic}}
-svg{{width:100%;height:auto}} svg .ax{{font-size:11px;fill:var(--doux)}} svg .grille{{stroke:var(--trait)}}
-footer,.note{{color:var(--doux);font-size:.92rem}} a{{color:#3d7cc9}}
-</style></head><body><main>
-<h1>BRVM MCP</h1>
-<p class="sous">Le marché d'actions de la BRVM, branché sur votre assistant IA.</p>
-<p><b>brvm-mcp</b> est un serveur <a href="https://modelcontextprotocol.io">Model Context Protocol</a> : il donne à Claude, ChatGPT, Cursor ou tout client MCP douze outils pour interroger les cours, indices, dividendes et fondamentaux des actions cotées à la Bourse Régionale des Valeurs Mobilières, et calculer leurs mesures de performance et de risque selon les règles du marché régional. L'assistant répond alors avec les vraies données de la séance, pas de mémoire.</p>
-<div class="bandeau">Données de la séance du <b>{fin:%d/%m/%Y}</b> ({statut}). Chaque bloc ci-dessous est la réponse d'un outil du serveur, appelé comme le ferait un assistant.</div>
 
-<h2>Les indices</h2>
-<div class="defile"><table><thead><tr><th>Indice</th><th>Clôture</th><th>Séance</th><th>20 séances</th><th>Depuis le 1er janvier</th></tr></thead><tbody>{lignes_ix}</tbody></table></div>
-{_appel("indice", code="BRVMC")}
-{_svg_indice(c["indices"]["BRVMC"]["cloture"])}
-<p class="note">BRVM Composite sur un an.</p>
+def outils_claude() -> list[dict]:
+    """Définitions des outils telles que le serveur MCP les annonce, au format de l'API Claude."""
+    liste = asyncio.run(S.serveur.list_tools())
+    out = []
+    for t in liste:
+        schema = getattr(t, "inputSchema", None) or getattr(t, "input_schema")
+        out.append({"name": t.name, "description": t.description or "", "input_schema": schema})
+    return out
 
-<h2>Le palmarès des 20 dernières séances</h2>
-<p class="note">Du {pd.Timestamp(pal["du"]):%d/%m/%Y} au {pd.Timestamp(pal["au"]):%d/%m/%Y}, variation du cours de clôture.</p>
-<div class="deux">
-<div><h3>Plus fortes hausses</h3><table><tbody>{lignes_pal(pal["hausses_pct"])}</tbody></table></div>
-<div><h3>Plus fortes baisses</h3><table><tbody>{lignes_pal(pal["baisses_pct"])}</tbody></table></div>
-</div>
-{_appel("palmares", seances=20, nombre=5)}
 
-<h2>Les plus grandes capitalisations sur un an</h2>
-<div class="defile"><table><thead><tr><th>Société</th><th>Rendement</th><th>Volatilité</th><th>Sharpe</th><th>VaR 95 % 1 j</th><th>Perte max.</th><th>Bêta</th><th>Échanges</th></tr></thead><tbody>{lignes_cmp}</tbody></table></div>
-{_appel("comparer", **c["appel_comparer"])}
-<p class="note">Rendement hors dividendes, volatilité annualisée sur 252 séances, VaR historique sur un jour, bêta face au BRVM Composite sur les dates communes d'échange, part des séances où le titre a échangé.</p>
+def page(c: dict, outils: list[dict], paquets: list[str]) -> str:
+    seance = c["derniere_seance"]
+    fin = pd.Timestamp(seance["derniere_seance"])
+    statut = "close" if seance.get("derniere_seance_close") else "provisoire"
+    pal = c["palmares"]
+    descr = {n: r for n, r in OUTILS}
+    cartes_outils = "".join(
+        f'<article class="outil-carte"><span class="famille f-{FAMILLES.get(o["name"], "Marché").lower()}">'
+        f'{FAMILLES.get(o["name"], "Marché")}</span><h3><code>{o["name"]}</code></h3>'
+        f'<p>{_x(descr.get(o["name"], o["description"].splitlines()[0]))}</p>'
+        f'<button class="lien" data-question="{_x(_question_outil(o["name"]))}">Essayer</button></article>'
+        for o in outils)
+    onglets = "".join(f'<button role="tab" aria-selected="{"true" if i == 0 else "false"}" data-onglet="{i}">{_x(k)}</button>'
+                      for i, k in enumerate(INSTALL))
+    panneaux = "".join(f'<div class="panneau" data-panneau="{i}"{"" if i == 0 else " hidden"}><pre><code>{_x(v)}</code></pre>'
+                       f'<button class="copier">Copier</button></div>' for i, v in enumerate(INSTALL.values()))
+    puces = "".join(f'<button class="puce" data-question="{_x(q)}">{_x(q)}</button>' for q in QUESTIONS_CHAT)
+    config = {"outils": outils, "instructions": S.INSTRUCTIONS, "paquets": paquets}
+    remplacements = {
+        "DATE": f"{fin:%d/%m/%Y}",
+        "STATUT": statut,
+        "NB_SOCIETES": str(len(c["noms"])),
+        "CARTES_INDICES": _cartes_indices(c),
+        "COURBE": _svg_courbe(c["indices"]["BRVMC"]["cloture"], "aire-brvmc"),
+        "RESUME": _resume(c["indices"]["BRVMC"]["cloture"]),
+        "PALMARES": _palmares(c),
+        "PAL_DU": f'{pd.Timestamp(pal["du"]):%d/%m/%Y}',
+        "PAL_AU": f'{pd.Timestamp(pal["au"]):%d/%m/%Y}',
+        "COMPARER": _comparer(c),
+        "APPEL_COMPARER": _x(", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in c["appel_comparer"].items())),
+        "PUCES": puces,
+        "OUTILS": cartes_outils,
+        "ONGLETS": onglets,
+        "PANNEAUX": panneaux,
+        "CONFIG": json.dumps(config, ensure_ascii=False).replace("</", "<\\/"),
+    }
+    texte = (ICI / "modele.html").read_text(encoding="utf-8")
+    for k, v in remplacements.items():
+        texte = texte.replace("{{" + k + "}}", v)
+    return texte
 
-<h2>Ce qu'on peut lui demander</h2>
-{questions}
 
-<h2>Installer</h2>
-{install}
-
-<h2>Les douze outils</h2>
-<table class="outils"><tbody>{outils}</tbody></table>
-
-<h2>Les règles de la BRVM prises en compte</h2>
-<ul>
-<li>Un titre qui n'échange pas un jour n'a pas de ligne ce jour-là : les rendements se calculent entre séances d'échange, jamais avec un rendement nul inventé.</li>
-<li>La variation d'un titre est limitée à ±7,5 % par séance : les séances à la limite sont signalées, car elles rendent la VaR historique trompeuse.</li>
-<li>Bêta et corrélations sur les dates communes d'échange, 31 observations au minimum.</li>
-<li>Cours ajustés des divisions du nominal ; dividendes nets d'IRVM contrôlés.</li>
-</ul>
-
-<p>Réponses brutes des outils : <a href="seance.json">JSON</a> · <a href="https://github.com/DylaneTrader/brvm-mcp">code</a> · <a href="https://github.com/DylaneTrader/brvm-py">données (brvm-py)</a></p>
-<footer>Données de marché : brvm-py (Sikafinance, brvm.org), fournies sans garantie. Mesures historiques, ce n'est pas un conseil en investissement. Dylane NDOUDY-BAMOUENIZO.</footer>
-</main></body></html>
-"""
+def _question_outil(nom: str) -> str:
+    return {
+        "derniere_seance": "Quelle est la dernière séance disponible, et est-elle close ?",
+        "rechercher_societe": "Quelles sociétés de télécommunications sont cotées à la BRVM ?",
+        "fiche_societe": "Donne-moi la fiche de Sonatel.",
+        "cours": "Montre les cours mensuels d'Orange Côte d'Ivoire depuis janvier 2025.",
+        "indice": "Comment a évolué le BRVM 30 sur les 20 dernières séances ?",
+        "liste_indices": "Quels indices sont disponibles, et depuis quand ?",
+        "dividendes": "Quels dividendes Sonatel a-t-il versés, nets d'IRVM pour un particulier ?",
+        "fondamentaux": "Quels sont les fondamentaux de la SGB CI, avec le PER au dernier cours ?",
+        "performance_risque": "Quel est le profil de risque de Sonatel sur un an : volatilité, VaR, perte maximale, bêta ?",
+        "comparer": "Compare Sonatel, Orange CI et SGB CI sur un an.",
+        "palmares": "Quelles actions ont le plus monté sur les 5 dernières séances ?",
+        "correlations": "Quelle est la corrélation entre Sonatel, Orange CI et SGB CI depuis un an ?",
+    }.get(nom, f"Utilise l'outil {nom}.")
 
 
 def main(argv=None) -> None:
@@ -228,8 +293,15 @@ def main(argv=None) -> None:
     a.add_argument("--sortie", default="site")
     sortie = Path(a.parse_args(argv).sortie)
     sortie.mkdir(parents=True, exist_ok=True)
+    for f in (ICI / "statique").iterdir():
+        shutil.copy(f, sortie / f.name)
+    paquets = sorted(f"paquets/{p.name}" for p in (sortie / "paquets").glob("*.whl"))
+    if not paquets:
+        print("Attention : aucune roue dans paquets/, le chat de la page ne pourra pas charger le serveur.")
+    if not (sortie / "vendor" / "anthropic.mjs").exists():
+        print("Attention : vendor/anthropic.mjs absent, le chat de la page ne pourra pas appeler Claude.")
     c = collecter()
-    (sortie / "index.html").write_text(page(c), encoding="utf-8")
+    (sortie / "index.html").write_text(page(c, outils_claude(), paquets), encoding="utf-8")
     (sortie / "seance.json").write_text(json.dumps({
         "derniere_seance": c["derniere_seance"],
         "palmares": c["palmares"],
