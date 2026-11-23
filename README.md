@@ -4,6 +4,8 @@ Serveur [MCP](https://modelcontextprotocol.io) pour la **Bourse Régionale des V
 
 Les données viennent de [brvm-py](https://github.com/DylaneTrader/brvm-py) : cours ajustés des divisions du nominal, dividendes contrôlés, mis à jour chaque jour de séance.
 
+Page de présentation, mise à jour chaque séance : **https://dylanetrader.github.io/brvm-mcp/** (la séance du jour vue par les outils du serveur, générée par `page/publier.py`).
+
 ## Ce qu'on peut demander
 
 > « Compare Sonatel, Orange CI et Société Générale CI depuis janvier 2025 : rendement, volatilité, perte maximale et bêta face au BRVM Composite. »
