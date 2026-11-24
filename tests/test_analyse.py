@@ -76,3 +76,16 @@ def test_table_json():
     assert t["lignes_total"] == 3 and t["lignes_montrees"] == 2
     assert t["lignes"][0][1] is None
     assert isinstance(t["lignes"][0][0], str)
+
+
+def test_propre_json():
+    r = analyse.propre({"d": pd.Timestamp("2026-11-20"), "n": np.nan, "t": pd.NaT, "i": np.int64(3),
+                        "f": np.float64(1.234567), "l": [np.bool_(True), None]}, 2)
+    assert r == {"d": "2026-11-20", "n": None, "t": None, "i": 3, "f": 1.23, "l": [True, None]}
+
+
+def test_en_pct():
+    df = pd.DataFrame({"r": [0.05, -0.1234], "nom": ["a", "b"], "n": [3, 4]})
+    out = analyse.en_pct(df, ["r", "nom"])
+    assert out["r"].tolist() == [5.0, -12.34]
+    assert out["nom"].tolist() == ["a", "b"] and out["n"].tolist() == [3, 4]

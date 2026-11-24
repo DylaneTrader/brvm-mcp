@@ -1,6 +1,6 @@
 # brvm-mcp
 
-Serveur [MCP](https://modelcontextprotocol.io) pour la **Bourse Régionale des Valeurs Mobilières** (BRVM, UEMOA). Il permet à un assistant IA (Claude, ChatGPT, Cursor, ou tout client MCP) d'interroger les cours, indices, dividendes et fondamentaux des actions cotées, et de calculer leurs mesures de performance et de risque, en respectant les règles du marché régional.
+Serveur [MCP](https://modelcontextprotocol.io) pour la **Bourse Régionale des Valeurs Mobilières** (BRVM, UEMOA). Il permet à un assistant IA (Claude, ChatGPT, Cursor, ou tout client MCP) d'interroger les cours, indices, dividendes et fondamentaux des actions cotées, les rapports publiés par les sociétés et les chiffres qu'on y lit, la composition des indices, et de calculer leurs mesures de performance, de risque et de valorisation, en respectant les règles du marché régional.
 
 Les données viennent de [brvm-py](https://github.com/DylaneTrader/brvm-py) : cours ajustés des divisions du nominal, dividendes contrôlés, mis à jour chaque jour de séance.
 
@@ -13,6 +13,12 @@ Page de présentation, mise à jour chaque séance : **https://dylanetrader.gith
 > « Quelles banques sont cotées au Sénégal, et quel est leur PER au dernier cours ? »
 
 > « Quelles actions ont le plus baissé sur les 20 dernières séances ? »
+
+> « Quel est le résultat net de SGBCI au troisième trimestre 2026, et dans quel rapport est-il publié ? »
+
+> « Quel est le poids de Sonatel dans le BRVM Composite, et quels titres pèsent le plus dans l'indice financier ? »
+
+> « Classe les télécoms par PER et rendement du dividende au 31 décembre 2025, avec les comptes connus à cette date. »
 
 ## Outils
 
@@ -29,6 +35,33 @@ Page de présentation, mise à jour chaque séance : **https://dylanetrader.gith
 | `comparer` | Les mêmes mesures pour plusieurs actions côte à côte |
 | `palmares` | Plus fortes hausses et baisses sur N séances |
 | `correlations` | Matrice de corrélation sur les dates communes d'échange |
+
+### Rapports des sociétés et indices
+
+| Outil | Rôle |
+|---|---|
+| `rapports` | Rapports publiés sur brvm.org (états financiers, rapports d'activité, annuels, semestriels, des commissaires aux comptes, RSE), avec le lien du PDF |
+| `chiffres` | Chiffres lus dans ces rapports, en millions de FCFA, annuels, semestriels et trimestriels ; `detail=True` donne la page et le lien du PDF de chaque chiffre |
+| `composition` | Poids des actions dans le BRVM Composite ou un indice sectoriel, à une séance |
+
+### Mesures de BRVM Analytics
+
+Ces outils reprennent `brvm.mesures`, qui reproduit les chiffres de l'application BRVM Analytics.
+
+| Outil | Rôle |
+|---|---|
+| `performances` | Rendements sur la semaine, le mois, le trimestre, l'année en cours et de 1 semaine à 10 ans, dividendes réinvestis ou non |
+| `rendement_total` | Placement dividendes nets d'IRVM réinvestis face au seul cours, part due aux dividendes |
+| `rendements_annuels` | Rendement par année civile de plusieurs titres ou indices |
+| `rendements_mensuels` | Grille des rendements mensuels et saisonnalité par mois |
+| `risque` | Volatilité, VaR et CVaR, perte maximale (dates, reprise, perte courante), bêta avec intervalle de confiance, R² et alpha |
+| `valorisation` | PER, cours / capitaux propres, ROE, cours / chiffre d'affaires, VE / EBE, rendement du dividende, à une date, avec les seuls comptes connus à cette date |
+| `ratios` | Comptes annuels et ratios d'une société (marges, ROE, ROA, distribution ; coefficient d'exploitation et coût du risque pour une banque) |
+| `etat_du_marche` | Régime de tendance de l'indice, participation (titres au-dessus de leur moyenne 200 séances) et Fear & Greed BRVM ; mesures descriptives, pas des signaux |
+
+`performance_risque` et `risque` ne mesurent pas la même chose : le premier calcule ses rendements entre séances d'échange, en quotidien ; le second suit les conventions de l'application (cours reporté les jours sans échange, rendements hebdomadaires par défaut, bêta en excès d'un taux sans risque de 3 %). Les deux restent disponibles.
+
+Le serveur n'expose ni actualités ni signaux d'achat ou de vente.
 
 ## Règles de la BRVM prises en compte
 
@@ -74,7 +107,7 @@ pip install -e ".[test]"
 pytest
 ```
 
-Les mesures sont dans `src/brvm_mcp/analyse.py`, en fonctions pures testées sans réseau ; les outils MCP sont dans `src/brvm_mcp/serveur.py`. Compatible avec le SDK MCP 1.x et 2.x.
+Les mesures propres au serveur sont dans `src/brvm_mcp/analyse.py`, en fonctions pures testées sans réseau ; les outils MCP sont dans `src/brvm_mcp/serveur.py`. Compatible avec le SDK MCP 1.x et 2.x.
 
 ## Avertissement
 

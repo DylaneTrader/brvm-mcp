@@ -157,3 +157,39 @@ def table(df: pd.DataFrame, max_lignes: int = 60) -> dict:
                (x.item() if hasattr(x, "item") else x) for x in row] for row in d.values.tolist()]
     return {"colonnes": [str(c) for c in d.columns], "lignes": lignes,
             "lignes_total": int(len(df)), "lignes_montrees": int(len(d))}
+
+
+def propre(x, n: int = 4):
+    """Rend une valeur sérialisable en JSON : dates en texte ISO, NaN et NaT à None, types numpy en
+    types Python, flottants arrondis à `n` décimales. Parcourt dictionnaires, listes et tuples."""
+    if isinstance(x, dict):
+        return {str(k): propre(v, n) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [propre(v, n) for v in x]
+    if x is None:
+        return None
+    if isinstance(x, pd.Timestamp):
+        return None if pd.isna(x) else str(x.date()) if x == x.normalize() else x.isoformat()
+    if x is pd.NaT:
+        return None
+    if isinstance(x, (np.bool_, bool)):
+        return bool(x)
+    if isinstance(x, (np.integer, int)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        return _arrondi(x, n)
+    try:
+        if pd.isna(x):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return x
+
+
+def en_pct(df: pd.DataFrame, colonnes=None, n: int = 2) -> pd.DataFrame:
+    """Passe des fractions (0,05) en pourcentages (5,0) arrondis, sur les colonnes données ou toutes."""
+    d = df.copy()
+    for c in (colonnes if colonnes is not None else d.columns):
+        if c in d.columns and pd.api.types.is_numeric_dtype(d[c]):
+            d[c] = (d[c].astype(float) * 100).round(n)
+    return d
