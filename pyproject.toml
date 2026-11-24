@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "brvm-mcp"
-version = "0.1.0"
-description = "Serveur MCP BRVM : un assistant IA interroge cours, dividendes, fondamentaux et risque des actions de la BRVM."
+version = "0.2.0"
+description = "Serveur MCP BRVM : un assistant IA interroge cours, dividendes, rapports, fondamentaux, valorisation et risque des actions de la BRVM."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
